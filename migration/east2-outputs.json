@@ -1,0 +1,112 @@
+﻿[
+    {
+        "OutputKey": "AsrJobsQueueArn",
+        "OutputValue": "arn:aws:sqs:us-east-2:747038497849:transcribe-mvp-AsrJobsQueue-maArdJGQskjq"
+    },
+    {
+        "OutputKey": "SqlClusterArnOut",
+        "OutputValue": "arn:aws:rds:us-east-2:747038497849:cluster:transcribe-mvp-analyticsdbcluster-5hsnuxhogthf"
+    },
+    {
+        "OutputKey": "SpeakerIdEcrRepoUri",
+        "OutputValue": "747038497849.dkr.ecr.us-east-2.amazonaws.com/transcribe-mvp-speakeridecrrepo-vd895v9mcbz1"
+    },
+    {
+        "OutputKey": "AsrClusterName",
+        "OutputValue": "transcribe-mvp-asr"
+    },
+    {
+        "OutputKey": "CloudFrontDistributionId",
+        "OutputValue": "E32QB63MIIQPHQ"
+    },
+    {
+        "OutputKey": "FrontendUrl",
+        "OutputValue": "https://d3f99vk7d58n2q.cloudfront.net",
+        "Description": "CloudFront frontend URL (HTTPS)"
+    },
+    {
+        "OutputKey": "AsrGpuSpotAsgName",
+        "OutputValue": "transcribe-mvp-AsrGpuSpotAutoScalingGroup-jequylX1kyNp"
+    },
+    {
+        "OutputKey": "ApiUrl",
+        "OutputValue": "https://6gu3f6e2y8.execute-api.us-east-2.amazonaws.com",
+        "Description": "HTTP API endpoint URL"
+    },
+    {
+        "OutputKey": "AsrJobsQueueUrl",
+        "OutputValue": "https://sqs.us-east-2.amazonaws.com/747038497849/transcribe-mvp-AsrJobsQueue-maArdJGQskjq"
+    },
+    {
+        "OutputKey": "AsrGpuSpotCapacityProviderName",
+        "OutputValue": "transcribe-mvp-AsrGpuSpotCapacityProvider-IgvzQItvQsW6"
+    },
+    {
+        "OutputKey": "DynamoTableName",
+        "OutputValue": "transcribe-mvp-TranscriptsTable-1NTHL1270MTTS"
+    },
+    {
+        "OutputKey": "AsrFargateFallbackTaskDefinitionArn",
+        "OutputValue": "arn:aws:ecs:us-east-2:747038497849:task-definition/transcribe-mvp-asr-worker-fargate:4"
+    },
+    {
+        "OutputKey": "AsrTaskDefinitionArn",
+        "OutputValue": "arn:aws:ecs:us-east-2:747038497849:task-definition/transcribe-mvp-asr-worker:17"
+    },
+    {
+        "OutputKey": "AsrWarmStateTableName",
+        "OutputValue": "transcribe-mvp-AsrWarmStateTable-113BSJ59GNFMG"
+    },
+    {
+        "OutputKey": "AsrWorkerEcrRepoUri",
+        "OutputValue": "747038497849.dkr.ecr.us-east-2.amazonaws.com/transcribe-mvp-asrworkerecrrepo-elayg7nbxp2l"
+    },
+    {
+        "OutputKey": "SqlSecretArnOut",
+        "OutputValue": "arn:aws:secretsmanager:us-east-2:747038497849:secret:rds!cluster-fee5a70a-4d4d-4376-8188-19df36f5919e-nSnlFm"
+    },
+    {
+        "OutputKey": "AsrWorkerCodeBuildProjectName",
+        "OutputValue": "transcribe-mvp-asr-build"
+    },
+    {
+        "OutputKey": "SpeakerIdCodeBuildProjectName",
+        "OutputValue": "transcribe-mvp-speakerid-build"
+    },
+    {
+        "OutputKey": "CloudFrontDomainName",
+        "OutputValue": "d3f99vk7d58n2q.cloudfront.net"
+    },
+    {
+        "OutputKey": "FrontendBucketName",
+        "OutputValue": "transcribe-mvp-frontendbucket-7jyilf3jspwu"
+    },
+    {
+        "OutputKey": "AsrGpuOnDemandCapacityProviderName",
+        "OutputValue": "transcribe-mvp-AsrGpuOnDemandCapacityProvider-dkMRj9tswXDP"
+    },
+    {
+        "OutputKey": "UploadsBucketName",
+        "OutputValue": "transcribe-mvp-uploadsbucket-kw1lglo8kega"
+    },
+    {
+        "OutputKey": "SqlEnabled",
+        "OutputValue": "true"
+    },
+    {
+        "OutputKey": "DailyWordStatsTableName",
+        "OutputValue": "transcribe-mvp-DailyWordStatsTable-1VRPR2AG1QBGP"
+    },
+    {
+        "OutputKey": "ArtifactsBucketName",
+        "OutputValue": "transcribe-mvp-artifactsbucket-iodr8cwcnb1g"
+    },
+    {
+        "OutputKey": "AsrGpuOnDemandAsgName",
+        "OutputValue": "transcribe-mvp-AsrGpuOnDemandAutoScalingGroup-dJBTWWJ8L3hc"
+    },
+    {
+        "OutputKey": "AsrWorkerServiceName",
+        "OutputValue": "arn:aws:ecs:us-east-2:747038497849:service/transcribe-mvp-asr/transcribe-mvp-asr-service"
+    }
+]

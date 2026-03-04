@@ -1,0 +1,29 @@
+version: 0.2
+
+env:
+  variables:
+    # Override at build start if desired.
+    QA_BASE_URL: ""
+
+phases:
+  install:
+    runtime-versions:
+      nodejs: 20
+    commands:
+      - cd qa
+      - npm ci
+      - npx playwright install --with-deps chromium
+  pre_build:
+    commands:
+      - echo "QA_BASE_URL=$QA_BASE_URL"
+  build:
+    commands:
+      - PW_HEADLESS=1 QA_SLOW_MO_MS=0 npm test
+      - cd ..
+      - rm -rf playwright-report || true
+      - cp -r qa/playwright-report ./playwright-report || true
+
+artifacts:
+  base-directory: playwright-report
+  files:
+    - "**/*"

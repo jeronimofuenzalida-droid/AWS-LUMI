@@ -1,0 +1,166 @@
+﻿{
+    "events": [
+        {
+            "logStreamName": "2026/02/26/[$LATEST]a4bc76844056417d991de3bc2d4f3bf1",
+            "timestamp": 1772128218020,
+            "message": "START RequestId: a6081801-e387-480e-ace6-2b231e9762a9 Version: $LATEST\n",
+            "ingestionTime": 1772128227049,
+            "eventId": "39519779849190144312352238238036838240170822973478338560"
+        },
+        {
+            "logStreamName": "2026/02/26/[$LATEST]a4bc76844056417d991de3bc2d4f3bf1",
+            "timestamp": 1772128218163,
+            "message": "speechbrain=1.0.3\n",
+            "ingestionTime": 1772128227049,
+            "eventId": "39519779852379150875742117347276445953159538668833538049"
+        },
+        {
+            "logStreamName": "2026/02/26/[$LATEST]a4bc76844056417d991de3bc2d4f3bf1",
+            "timestamp": 1772128218163,
+            "message": "speechbrain.inference import ok\n",
+            "ingestionTime": 1772128227049,
+            "eventId": "39519779852379150875742117347276445953159538668833538050"
+        },
+        {
+            "logStreamName": "2026/02/26/[$LATEST]a4bc76844056417d991de3bc2d4f3bf1",
+            "timestamp": 1772128218164,
+            "message": "[INFO]\t2026-02-26T17:50:18.163Z\ta6081801-e387-480e-ace6-2b231e9762a9\tFetch hyperparams.yaml: Using symlink found at '/tmp/models/spkrec/hyperparams.yaml'\n",
+            "ingestionTime": 1772128227049,
+            "eventId": "39519779852401451620940647970417981671432187030339518467"
+        },
+        {
+            "logStreamName": "2026/02/26/[$LATEST]a4bc76844056417d991de3bc2d4f3bf1",
+            "timestamp": 1772128218164,
+            "message": "[INFO]\t2026-02-26T17:50:18.164Z\ta6081801-e387-480e-ace6-2b231e9762a9\tFetch custom.py: Fetching from HuggingFace Hub 'speechbrain/spkrec-ecapa-voxceleb' if not cached\n",
+            "ingestionTime": 1772128227049,
+            "eventId": "39519779852401451620940647970417981671432187030339518468"
+        },
+        {
+            "logStreamName": "2026/02/26/[$LATEST]a4bc76844056417d991de3bc2d4f3bf1",
+            "timestamp": 1772128218457,
+            "message": "[DEBUG]\t2026-02-26T17:50:18.457Z\ta6081801-e387-480e-ace6-2b231e9762a9\tCollecting files (or symlinks) for pretraining in /tmp/models/spkrec.\n",
+            "ingestionTime": 1772128227049,
+            "eventId": "39519779858935569964110120550887947125318156951591780357"
+        },
+        {
+            "logStreamName": "2026/02/26/[$LATEST]a4bc76844056417d991de3bc2d4f3bf1",
+            "timestamp": 1772128218457,
+            "message": "[INFO]\t2026-02-26T17:50:18.457Z\ta6081801-e387-480e-ace6-2b231e9762a9\tFetch embedding_model.ckpt: Using symlink found at '/tmp/models/spkrec/embedding_model.ckpt'\n",
+            "ingestionTime": 1772128227049,
+            "eventId": "39519779858935569964110120550887947125318156951591780358"
+        },
+        {
+            "logStreamName": "2026/02/26/[$LATEST]a4bc76844056417d991de3bc2d4f3bf1",
+            "timestamp": 1772128218457,
+            "message": "[DEBUG]\t2026-02-26T17:50:18.457Z\ta6081801-e387-480e-ace6-2b231e9762a9\tSet local path in self.paths[\"embedding_model\"] = /tmp/models/spkrec/embedding_model.ckpt\n",
+            "ingestionTime": 1772128227049,
+            "eventId": "39519779858935569964110120550887947125318156951591780359"
+        },
+        {
+            "logStreamName": "2026/02/26/[$LATEST]a4bc76844056417d991de3bc2d4f3bf1",
+            "timestamp": 1772128218457,
+            "message": "[INFO]\t2026-02-26T17:50:18.457Z\ta6081801-e387-480e-ace6-2b231e9762a9\tFetch mean_var_norm_emb.ckpt: Using symlink found at '/tmp/models/spkrec/mean_var_norm_emb.ckpt'\n",
+            "ingestionTime": 1772128227049,
+            "eventId": "39519779858935569964110120550887947125318156951591780360"
+        },
+        {
+            "logStreamName": "2026/02/26/[$LATEST]a4bc76844056417d991de3bc2d4f3bf1",
+            "timestamp": 1772128218457,
+            "message": "[DEBUG]\t2026-02-26T17:50:18.457Z\ta6081801-e387-480e-ace6-2b231e9762a9\tSet local path in self.paths[\"mean_var_norm_emb\"] = /tmp/models/spkrec/mean_var_norm_emb.ckpt\n",
+            "ingestionTime": 1772128227049,
+            "eventId": "39519779858935569964110120550887947125318156951591780361"
+        },
+        {
+            "logStreamName": "2026/02/26/[$LATEST]a4bc76844056417d991de3bc2d4f3bf1",
+            "timestamp": 1772128218458,
+            "message": "[INFO]\t2026-02-26T17:50:18.458Z\ta6081801-e387-480e-ace6-2b231e9762a9\tFetch classifier.ckpt: Using symlink found at '/tmp/models/spkrec/classifier.ckpt'\n",
+            "ingestionTime": 1772128227049,
+            "eventId": "39519779858957870709308651174029482843590805313097760778"
+        },
+        {
+            "logStreamName": "2026/02/26/[$LATEST]a4bc76844056417d991de3bc2d4f3bf1",
+            "timestamp": 1772128218458,
+            "message": "[DEBUG]\t2026-02-26T17:50:18.458Z\ta6081801-e387-480e-ace6-2b231e9762a9\tSet local path in self.paths[\"classifier\"] = /tmp/models/spkrec/classifier.ckpt\n",
+            "ingestionTime": 1772128227049,
+            "eventId": "39519779858957870709308651174029482843590805313097760779"
+        },
+        {
+            "logStreamName": "2026/02/26/[$LATEST]a4bc76844056417d991de3bc2d4f3bf1",
+            "timestamp": 1772128218458,
+            "message": "[INFO]\t2026-02-26T17:50:18.458Z\ta6081801-e387-480e-ace6-2b231e9762a9\tFetch label_encoder.txt: Using symlink found at '/tmp/models/spkrec/label_encoder.ckpt'\n",
+            "ingestionTime": 1772128227049,
+            "eventId": "39519779858957870709308651174029482843590805313097760780"
+        },
+        {
+            "logStreamName": "2026/02/26/[$LATEST]a4bc76844056417d991de3bc2d4f3bf1",
+            "timestamp": 1772128218458,
+            "message": "[DEBUG]\t2026-02-26T17:50:18.458Z\ta6081801-e387-480e-ace6-2b231e9762a9\tSet local path in self.paths[\"label_encoder\"] = /tmp/models/spkrec/label_encoder.ckpt\n",
+            "ingestionTime": 1772128227049,
+            "eventId": "39519779858957870709308651174029482843590805313097760781"
+        },
+        {
+            "logStreamName": "2026/02/26/[$LATEST]a4bc76844056417d991de3bc2d4f3bf1",
+            "timestamp": 1772128218458,
+            "message": "[INFO]\t2026-02-26T17:50:18.458Z\ta6081801-e387-480e-ace6-2b231e9762a9\tLoading pretrained files for: embedding_model, mean_var_norm_emb, classifier, label_encoder\n",
+            "ingestionTime": 1772128227049,
+            "eventId": "39519779858957870709308651174029482843590805313097760782"
+        },
+        {
+            "logStreamName": "2026/02/26/[$LATEST]a4bc76844056417d991de3bc2d4f3bf1",
+            "timestamp": 1772128218458,
+            "message": "[DEBUG]\t2026-02-26T17:50:18.458Z\ta6081801-e387-480e-ace6-2b231e9762a9\tRedirecting (loading from local path): embedding_model -> /tmp/models/spkrec/embedding_model.ckpt\n",
+            "ingestionTime": 1772128227049,
+            "eventId": "39519779858957870709308651174029482843590805313097760783"
+        },
+        {
+            "logStreamName": "2026/02/26/[$LATEST]a4bc76844056417d991de3bc2d4f3bf1",
+            "timestamp": 1772128218458,
+            "message": "[DEBUG]\t2026-02-26T17:50:18.458Z\ta6081801-e387-480e-ace6-2b231e9762a9\tRedirecting (loading from local path): mean_var_norm_emb -> /tmp/models/spkrec/mean_var_norm_emb.ckpt\n",
+            "ingestionTime": 1772128227049,
+            "eventId": "39519779858957870709308651174029482843590805313097760784"
+        },
+        {
+            "logStreamName": "2026/02/26/[$LATEST]a4bc76844056417d991de3bc2d4f3bf1",
+            "timestamp": 1772128218458,
+            "message": "[DEBUG]\t2026-02-26T17:50:18.458Z\ta6081801-e387-480e-ace6-2b231e9762a9\tRedirecting (loading from local path): classifier -> /tmp/models/spkrec/classifier.ckpt\n",
+            "ingestionTime": 1772128227049,
+            "eventId": "39519779858957870709308651174029482843590805313097760785"
+        },
+        {
+            "logStreamName": "2026/02/26/[$LATEST]a4bc76844056417d991de3bc2d4f3bf1",
+            "timestamp": 1772128218458,
+            "message": "[DEBUG]\t2026-02-26T17:50:18.458Z\ta6081801-e387-480e-ace6-2b231e9762a9\tRedirecting (loading from local path): label_encoder -> /tmp/models/spkrec/label_encoder.ckpt\n",
+            "ingestionTime": 1772128227049,
+            "eventId": "39519779858957870709308651174029482843590805313097760786"
+        },
+        {
+            "logStreamName": "2026/02/26/[$LATEST]a4bc76844056417d991de3bc2d4f3bf1",
+            "timestamp": 1772128218568,
+            "message": "[DEBUG]\t2026-02-26T17:50:18.568Z\ta6081801-e387-480e-ace6-2b231e9762a9\tLoaded categorical encoding from /tmp/models/spkrec/label_encoder.ckpt\n",
+            "ingestionTime": 1772128227049,
+            "eventId": "39519779861410952681147019719598411853582125078755606547"
+        },
+        {
+            "logStreamName": "2026/02/26/[$LATEST]a4bc76844056417d991de3bc2d4f3bf1",
+            "timestamp": 1772128265304,
+            "message": "DailyWordStats updated for user=a1 day=2026-02-26\n",
+            "ingestionTime": 1772128274329,
+            "eventId": "39519780903658580279674222919569528657216085603668787200"
+        },
+        {
+            "logStreamName": "2026/02/26/[$LATEST]a4bc76844056417d991de3bc2d4f3bf1",
+            "timestamp": 1772128265309,
+            "message": "END RequestId: a6081801-e387-480e-ace6-2b231e9762a9\n",
+            "ingestionTime": 1772128274329,
+            "eventId": "39519780903770084005666876035277207248579327411198689281"
+        },
+        {
+            "logStreamName": "2026/02/26/[$LATEST]a4bc76844056417d991de3bc2d4f3bf1",
+            "timestamp": 1772128265309,
+            "message": "REPORT RequestId: a6081801-e387-480e-ace6-2b231e9762a9\tDuration: 47289.80 ms\tBilled Duration: 47290 ms\tMemory Size: 3008 MB\tMax Memory Used: 1887 MB\t\n",
+            "ingestionTime": 1772128274329,
+            "eventId": "39519780903770084005666876035277207248579327411198689282"
+        }
+    ],
+    "searchedLogStreams": []
+}

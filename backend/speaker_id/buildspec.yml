@@ -1,0 +1,22 @@
+version: 0.2
+
+env:
+  variables:
+    IMAGE_TAG: "dev"
+
+phases:
+  pre_build:
+    commands:
+      - echo Logging in to ECR...
+      - aws --version
+      - REGISTRY="$(echo "$ECR_REPO_URI" | cut -d/ -f1)"
+      - aws ecr get-login-password --region "$AWS_REGION" | docker login --username AWS --password-stdin "$REGISTRY"
+  build:
+    commands:
+      - echo Build started on `date`
+      - docker build -t "$ECR_REPO_URI:$IMAGE_TAG" .
+  post_build:
+    commands:
+      - echo Pushing...
+      - docker push "$ECR_REPO_URI:$IMAGE_TAG"
+      - echo "IMAGE_URI=$ECR_REPO_URI:$IMAGE_TAG"

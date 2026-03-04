@@ -1,0 +1,1620 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: MVP transcription app (S3 + Lambda + HTTP API + DynamoDB + Whisper ECS
+  worker + static frontend)
+Parameters:
+  SpeakerIdImageUri:
+    Type: String
+    Default: ''
+    Description: ECR image URI for SpeakerIdFunction (built via CodeBuild). Leave
+      blank to skip creating SpeakerIdFunction.
+  AsrWorkerImageUri:
+    Type: String
+    Default: ''
+    Description: ECR image URI for ASR worker ECS task (built via CodeBuild).
+  AsrEngine:
+    Type: String
+    Default: whisper
+    AllowedValues:
+    - whisper
+    - transcribe
+    Description: Active ASR engine used by API Lambda.
+  HfToken:
+    Type: String
+    Default: ''
+    NoEcho: true
+    Description: Hugging Face token for pyannote model download.
+  WhisperModel:
+    Type: String
+    Default: medium
+    Description: faster-whisper model size for ASR worker.
+  PyannoteModel:
+    Type: String
+    Default: pyannote/speaker-diarization-community-1
+    Description: Pyannote diarization model ID.
+  AsrGpuAmiId:
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/ecs/optimized-ami/amazon-linux-2/gpu/recommended/image_id
+    Description: ECS-optimized GPU AMI ID (via SSM parameter).
+  EnableManagedSql:
+    Type: String
+    Default: 'true'
+    AllowedValues:
+    - 'true'
+    - 'false'
+    Description: Set to false to disable managed Aurora SQL creation unless external
+      SQL ARNs are provided.
+  EnableGpuPath:
+    Type: String
+    Default: 'false'
+    AllowedValues:
+    - 'true'
+    - 'false'
+    Description: Set to true to enable GPU ECS capacity/resources.
+  SqlClusterArn:
+    Type: String
+    Default: ''
+    Description: Existing Aurora PostgreSQL cluster ARN (Data API enabled). Leave
+      blank to disable SQL analytics.
+  SqlSecretArn:
+    Type: String
+    Default: ''
+    Description: Secrets Manager ARN for Aurora credentials.
+  SqlDatabase:
+    Type: String
+    Default: lumi
+    Description: Aurora database name.
+Conditions:
+  HasSpeakerIdImage:
+    Fn::Not:
+    - Fn::Equals:
+      - Ref: SpeakerIdImageUri
+      - ''
+  HasAsrWorkerImage:
+    Fn::Not:
+    - Fn::Equals:
+      - Ref: AsrWorkerImageUri
+      - ''
+  EnableManagedSqlCondition:
+    Fn::Equals:
+    - Ref: EnableManagedSql
+    - 'true'
+  UseGpuPath:
+    Fn::Equals:
+    - Ref: EnableGpuPath
+    - 'true'
+  HasExternalSql:
+    Fn::And:
+    - Fn::Not:
+      - Fn::Equals:
+        - Ref: SqlClusterArn
+        - ''
+    - Fn::Not:
+      - Fn::Equals:
+        - Ref: SqlSecretArn
+        - ''
+  CreateManagedSql:
+    Fn::And:
+    - Condition: EnableManagedSqlCondition
+    - Fn::Not:
+      - Condition: HasExternalSql
+  HasSql:
+    Fn::Or:
+    - Condition: HasExternalSql
+    - Condition: CreateManagedSql
+  HasAsrWorkerImageAndGpu:
+    Fn::And:
+    - Condition: HasAsrWorkerImage
+    - Condition: UseGpuPath
+Resources:
+  HttpApi:
+    Type: AWS::Serverless::HttpApi
+    Properties:
+      CorsConfiguration:
+        AllowOrigins:
+        - '*'
+        AllowHeaders:
+        - '*'
+        AllowMethods:
+        - GET
+        - POST
+        - OPTIONS
+  UploadsBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+        - ServerSideEncryptionByDefault:
+            SSEAlgorithm: AES256
+      CorsConfiguration:
+        CorsRules:
+        - AllowedOrigins:
+          - '*'
+          AllowedMethods:
+          - PUT
+          - GET
+          - HEAD
+          AllowedHeaders:
+          - '*'
+          ExposedHeaders:
+          - ETag
+          MaxAge: 3000
+  ArtifactsBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+        - ServerSideEncryptionByDefault:
+            SSEAlgorithm: AES256
+  AnalyticsVpc:
+    Condition: CreateManagedSql
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.50.0.0/16
+      EnableDnsHostnames: true
+      EnableDnsSupport: true
+  AnalyticsPrivateSubnetA:
+    Condition: CreateManagedSql
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId:
+        Ref: AnalyticsVpc
+      CidrBlock: 10.50.1.0/24
+      AvailabilityZone:
+        Fn::Select:
+        - 0
+        - Fn::GetAZs: ''
+      MapPublicIpOnLaunch: false
+  AnalyticsPrivateSubnetB:
+    Condition: CreateManagedSql
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId:
+        Ref: AnalyticsVpc
+      CidrBlock: 10.50.2.0/24
+      AvailabilityZone:
+        Fn::Select:
+        - 1
+        - Fn::GetAZs: ''
+      MapPublicIpOnLaunch: false
+  AnalyticsDbSubnetGroup:
+    Condition: CreateManagedSql
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: Subnets for Aurora SQL analytics
+      SubnetIds:
+      - Ref: AnalyticsPrivateSubnetA
+      - Ref: AnalyticsPrivateSubnetB
+  AnalyticsDbSecurityGroup:
+    Condition: CreateManagedSql
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Aurora analytics SG
+      VpcId:
+        Ref: AnalyticsVpc
+  AnalyticsDbCluster:
+    Condition: CreateManagedSql
+    Type: AWS::RDS::DBCluster
+    DeletionPolicy: Snapshot
+    UpdateReplacePolicy: Snapshot
+    Properties:
+      Engine: aurora-postgresql
+      DatabaseName: lumi
+      DBSubnetGroupName:
+        Ref: AnalyticsDbSubnetGroup
+      VpcSecurityGroupIds:
+      - Ref: AnalyticsDbSecurityGroup
+      MasterUsername: masteruser
+      ManageMasterUserPassword: true
+      EnableHttpEndpoint: true
+      StorageEncrypted: true
+      BackupRetentionPeriod: 1
+      DeletionProtection: false
+      ServerlessV2ScalingConfiguration:
+        MinCapacity: 0.5
+        MaxCapacity: 1
+  AnalyticsDbInstance:
+    Condition: CreateManagedSql
+    Type: AWS::RDS::DBInstance
+    Properties:
+      DBClusterIdentifier:
+        Ref: AnalyticsDbCluster
+      Engine: aurora-postgresql
+      DBInstanceClass: db.serverless
+      PubliclyAccessible: false
+  FrontendBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      OwnershipControls:
+        Rules:
+        - ObjectOwnership: BucketOwnerPreferred
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+  FrontendOriginAccessControl:
+    Type: AWS::CloudFront::OriginAccessControl
+    Properties:
+      OriginAccessControlConfig:
+        Name:
+          Fn::Sub: ${AWS::StackName}-${AWS::Region}-frontend-oac
+        Description: OAC for private frontend bucket
+        OriginAccessControlOriginType: s3
+        SigningBehavior: always
+        SigningProtocol: sigv4
+  FrontendDistribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        Comment:
+          Fn::Sub: ${AWS::StackName} frontend distribution
+        DefaultRootObject: index.html
+        HttpVersion: http2
+        PriceClass: PriceClass_100
+        IPV6Enabled: true
+        Origins:
+        - Id: FrontendS3Origin
+          DomainName:
+            Fn::GetAtt:
+            - FrontendBucket
+            - RegionalDomainName
+          S3OriginConfig: {}
+          OriginAccessControlId:
+            Ref: FrontendOriginAccessControl
+        DefaultCacheBehavior:
+          TargetOriginId: FrontendS3Origin
+          ViewerProtocolPolicy: redirect-to-https
+          AllowedMethods:
+          - GET
+          - HEAD
+          - OPTIONS
+          CachedMethods:
+          - GET
+          - HEAD
+          - OPTIONS
+          Compress: true
+          ForwardedValues:
+            QueryString: false
+            Cookies:
+              Forward: none
+        CustomErrorResponses:
+        - ErrorCode: 403
+          ResponseCode: 200
+          ResponsePagePath: /index.html
+          ErrorCachingMinTTL: 0
+        - ErrorCode: 404
+          ResponseCode: 200
+          ResponsePagePath: /index.html
+          ErrorCachingMinTTL: 0
+        ViewerCertificate:
+          CloudFrontDefaultCertificate: true
+  FrontendBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket:
+        Ref: FrontendBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Sid: AllowCloudFrontServiceGetObject
+          Effect: Allow
+          Principal:
+            Service: cloudfront.amazonaws.com
+          Action:
+          - s3:GetObject
+          Resource:
+          - Fn::Sub: ${FrontendBucket.Arn}/*
+          Condition:
+            StringEquals:
+              AWS:SourceArn:
+                Fn::Sub: arn:aws:cloudfront::${AWS::AccountId}:distribution/${FrontendDistribution}
+  TranscriptsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+      - AttributeName: userId
+        AttributeType: S
+      - AttributeName: transcriptId
+        AttributeType: S
+      KeySchema:
+      - AttributeName: userId
+        KeyType: HASH
+      - AttributeName: transcriptId
+        KeyType: RANGE
+      GlobalSecondaryIndexes:
+      - IndexName: TranscriptIdIndex
+        KeySchema:
+        - AttributeName: transcriptId
+          KeyType: HASH
+        Projection:
+          ProjectionType: ALL
+  DailyWordStatsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+      - AttributeName: userId
+        AttributeType: S
+      - AttributeName: dayRole
+        AttributeType: S
+      KeySchema:
+      - AttributeName: userId
+        KeyType: HASH
+      - AttributeName: dayRole
+        KeyType: RANGE
+  AsrJobsDlq:
+    Type: AWS::SQS::Queue
+    Properties:
+      MessageRetentionPeriod: 1209600
+  AsrJobsQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      VisibilityTimeout: 7200
+      ReceiveMessageWaitTimeSeconds: 20
+      RedrivePolicy:
+        deadLetterTargetArn:
+          Fn::GetAtt:
+          - AsrJobsDlq
+          - Arn
+        maxReceiveCount: 3
+  AsrWarmStateTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+      - AttributeName: scope
+        AttributeType: S
+      KeySchema:
+      - AttributeName: scope
+        KeyType: HASH
+  AsrVpc:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.60.0.0/16
+      EnableDnsHostnames: true
+      EnableDnsSupport: true
+  AsrInternetGateway:
+    Type: AWS::EC2::InternetGateway
+  AsrVpcGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId:
+        Ref: AsrVpc
+      InternetGatewayId:
+        Ref: AsrInternetGateway
+  AsrPublicSubnetA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId:
+        Ref: AsrVpc
+      CidrBlock: 10.60.1.0/24
+      AvailabilityZone:
+        Fn::Select:
+        - 0
+        - Fn::GetAZs: ''
+      MapPublicIpOnLaunch: true
+  AsrPublicSubnetB:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId:
+        Ref: AsrVpc
+      CidrBlock: 10.60.2.0/24
+      AvailabilityZone:
+        Fn::Select:
+        - 1
+        - Fn::GetAZs: ''
+      MapPublicIpOnLaunch: true
+  AsrPublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId:
+        Ref: AsrVpc
+  AsrPublicDefaultRoute:
+    Type: AWS::EC2::Route
+    DependsOn: AsrVpcGatewayAttachment
+    Properties:
+      RouteTableId:
+        Ref: AsrPublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId:
+        Ref: AsrInternetGateway
+  AsrSubnetRouteAssocA:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId:
+        Ref: AsrPublicSubnetA
+      RouteTableId:
+        Ref: AsrPublicRouteTable
+  AsrSubnetRouteAssocB:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId:
+        Ref: AsrPublicSubnetB
+      RouteTableId:
+        Ref: AsrPublicRouteTable
+  AsrTaskSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: ASR worker ECS task security group
+      VpcId:
+        Ref: AsrVpc
+      SecurityGroupEgress:
+      - IpProtocol: -1
+        CidrIp: 0.0.0.0/0
+  AsrWorkerLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName:
+        Fn::Sub: /aws/ecs/${AWS::StackName}-asr-worker
+      RetentionInDays: 7
+  AsrEcsCluster:
+    Type: AWS::ECS::Cluster
+    Properties:
+      ClusterName:
+        Fn::Sub: ${AWS::StackName}-asr
+      CapacityProviders:
+        Fn::If:
+        - UseGpuPath
+        - - Ref: AsrGpuSpotCapacityProvider
+          - Ref: AsrGpuOnDemandCapacityProvider
+        - Ref: AWS::NoValue
+      DefaultCapacityProviderStrategy:
+        Fn::If:
+        - UseGpuPath
+        - - CapacityProvider:
+              Ref: AsrGpuSpotCapacityProvider
+            Weight: 1
+          - CapacityProvider:
+              Ref: AsrGpuOnDemandCapacityProvider
+            Weight: 1
+        - Ref: AWS::NoValue
+  AsrEc2InstanceRole:
+    Condition: UseGpuPath
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: ec2.amazonaws.com
+          Action: sts:AssumeRole
+      ManagedPolicyArns:
+      - arn:aws:iam::aws:policy/service-role/AmazonEC2ContainerServiceforEC2Role
+      - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+  AsrEc2InstanceProfile:
+    Condition: UseGpuPath
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles:
+      - Ref: AsrEc2InstanceRole
+  AsrGpuSpotLaunchTemplate:
+    Condition: UseGpuPath
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateData:
+        ImageId:
+          Ref: AsrGpuAmiId
+        InstanceType: g4dn.xlarge
+        IamInstanceProfile:
+          Arn:
+            Fn::GetAtt:
+            - AsrEc2InstanceProfile
+            - Arn
+        SecurityGroupIds:
+        - Ref: AsrTaskSecurityGroup
+        InstanceMarketOptions:
+          MarketType: spot
+        UserData:
+          Fn::Base64:
+            Fn::Sub: "#!/bin/bash\necho ECS_CLUSTER=${AWS::StackName}-asr >> /etc/ecs/ecs.config\n\
+              echo ECS_ENABLE_TASK_ENI=true >> /etc/ecs/ecs.config\necho ECS_ENABLE_GPU_SUPPORT=true\
+              \ >> /etc/ecs/ecs.config\necho ECS_ENABLE_SPOT_INSTANCE_DRAINING=true\
+              \ >> /etc/ecs/ecs.config\n"
+  AsrGpuOnDemandLaunchTemplate:
+    Condition: UseGpuPath
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateData:
+        ImageId:
+          Ref: AsrGpuAmiId
+        InstanceType: g4dn.xlarge
+        IamInstanceProfile:
+          Arn:
+            Fn::GetAtt:
+            - AsrEc2InstanceProfile
+            - Arn
+        SecurityGroupIds:
+        - Ref: AsrTaskSecurityGroup
+        UserData:
+          Fn::Base64:
+            Fn::Sub: "#!/bin/bash\necho ECS_CLUSTER=${AWS::StackName}-asr >> /etc/ecs/ecs.config\n\
+              echo ECS_ENABLE_TASK_ENI=true >> /etc/ecs/ecs.config\necho ECS_ENABLE_GPU_SUPPORT=true\
+              \ >> /etc/ecs/ecs.config\n"
+  AsrGpuSpotAutoScalingGroup:
+    Condition: UseGpuPath
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+      MinSize: '0'
+      MaxSize: '2'
+      DesiredCapacity: '0'
+      VPCZoneIdentifier:
+      - Ref: AsrPublicSubnetA
+      - Ref: AsrPublicSubnetB
+      LaunchTemplate:
+        LaunchTemplateId:
+          Ref: AsrGpuSpotLaunchTemplate
+        Version:
+          Fn::GetAtt:
+          - AsrGpuSpotLaunchTemplate
+          - LatestVersionNumber
+      Tags:
+      - Key: Name
+        Value:
+          Fn::Sub: ${AWS::StackName}-asr-gpu-spot
+        PropagateAtLaunch: true
+  AsrGpuOnDemandAutoScalingGroup:
+    Condition: UseGpuPath
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+      MinSize: '0'
+      MaxSize: '1'
+      DesiredCapacity: '0'
+      VPCZoneIdentifier:
+      - Ref: AsrPublicSubnetA
+      - Ref: AsrPublicSubnetB
+      LaunchTemplate:
+        LaunchTemplateId:
+          Ref: AsrGpuOnDemandLaunchTemplate
+        Version:
+          Fn::GetAtt:
+          - AsrGpuOnDemandLaunchTemplate
+          - LatestVersionNumber
+      Tags:
+      - Key: Name
+        Value:
+          Fn::Sub: ${AWS::StackName}-asr-gpu-ondemand
+        PropagateAtLaunch: true
+  AsrGpuSpotCapacityProvider:
+    Condition: UseGpuPath
+    Type: AWS::ECS::CapacityProvider
+    Properties:
+      AutoScalingGroupProvider:
+        AutoScalingGroupArn:
+          Fn::GetAtt:
+          - AsrGpuSpotAutoScalingGroup
+          - AutoScalingGroupARN
+        ManagedScaling:
+          Status: ENABLED
+          TargetCapacity: 100
+          MinimumScalingStepSize: 1
+          MaximumScalingStepSize: 1
+        ManagedTerminationProtection: DISABLED
+  AsrGpuOnDemandCapacityProvider:
+    Condition: UseGpuPath
+    Type: AWS::ECS::CapacityProvider
+    Properties:
+      AutoScalingGroupProvider:
+        AutoScalingGroupArn:
+          Fn::GetAtt:
+          - AsrGpuOnDemandAutoScalingGroup
+          - AutoScalingGroupARN
+        ManagedScaling:
+          Status: ENABLED
+          TargetCapacity: 100
+          MinimumScalingStepSize: 1
+          MaximumScalingStepSize: 1
+        ManagedTerminationProtection: DISABLED
+  AsrTaskExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: ecs-tasks.amazonaws.com
+          Action: sts:AssumeRole
+      ManagedPolicyArns:
+      - arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+  AsrTaskRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: ecs-tasks.amazonaws.com
+          Action: sts:AssumeRole
+      Policies:
+      - PolicyName: AsrTaskAccessPolicy
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Effect: Allow
+            Action:
+            - s3:GetObject
+            Resource:
+            - Fn::Sub: ${UploadsBucket.Arn}/uploads/*
+            - Fn::Sub: ${UploadsBucket.Arn}/calibrations/*
+          - Effect: Allow
+            Action:
+            - s3:PutObject
+            Resource:
+            - Fn::Sub: ${ArtifactsBucket.Arn}/transcripts/*
+          - Effect: Allow
+            Action:
+            - dynamodb:GetItem
+            - dynamodb:PutItem
+            - dynamodb:UpdateItem
+            - dynamodb:Query
+            - dynamodb:Scan
+            Resource:
+            - Fn::GetAtt:
+              - TranscriptsTable
+              - Arn
+            - Fn::Sub: ${TranscriptsTable.Arn}/index/*
+            - Fn::GetAtt:
+              - DailyWordStatsTable
+              - Arn
+          - Effect: Allow
+            Action:
+            - sqs:ReceiveMessage
+            - sqs:DeleteMessage
+            - sqs:ChangeMessageVisibility
+            - sqs:GetQueueAttributes
+            Resource:
+              Fn::GetAtt:
+              - AsrJobsQueue
+              - Arn
+          - Effect: Allow
+            Action:
+            - dynamodb:GetItem
+            - dynamodb:PutItem
+            - dynamodb:UpdateItem
+            Resource:
+              Fn::GetAtt:
+              - AsrWarmStateTable
+              - Arn
+          - Fn::If:
+            - HasSpeakerIdImage
+            - Effect: Allow
+              Action:
+              - lambda:InvokeFunction
+              Resource:
+                Fn::GetAtt:
+                - SpeakerIdFunction
+                - Arn
+            - Ref: AWS::NoValue
+  AsrWorkerTaskDefinition:
+    Condition: HasAsrWorkerImageAndGpu
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family:
+        Fn::Sub: ${AWS::StackName}-asr-worker
+      Cpu: '3072'
+      Memory: '12288'
+      NetworkMode: awsvpc
+      RequiresCompatibilities:
+      - EC2
+      RuntimePlatform:
+        CpuArchitecture: X86_64
+        OperatingSystemFamily: LINUX
+      ExecutionRoleArn:
+        Fn::GetAtt:
+        - AsrTaskExecutionRole
+        - Arn
+      TaskRoleArn:
+        Fn::GetAtt:
+        - AsrTaskRole
+        - Arn
+      ContainerDefinitions:
+      - Name: asr-worker
+        Image:
+          Ref: AsrWorkerImageUri
+        Essential: true
+        ResourceRequirements:
+        - Type: GPU
+          Value: '1'
+        Environment:
+        - Name: AWS_REGION
+          Value:
+            Ref: AWS::Region
+        - Name: UPLOADS_BUCKET
+          Value:
+            Ref: UploadsBucket
+        - Name: ARTIFACTS_BUCKET
+          Value:
+            Ref: ArtifactsBucket
+        - Name: CALIBRATION_BUCKET
+          Value:
+            Ref: UploadsBucket
+        - Name: TRANSCRIPTS_TABLE
+          Value:
+            Ref: TranscriptsTable
+        - Name: TRANSCRIPT_ID_INDEX
+          Value: TranscriptIdIndex
+        - Name: DAILY_WORD_STATS_TABLE
+          Value:
+            Ref: DailyWordStatsTable
+        - Name: ASR_JOBS_QUEUE_URL
+          Value:
+            Ref: AsrJobsQueue
+        - Name: ASR_WARM_STATE_TABLE
+          Value:
+            Ref: AsrWarmStateTable
+        - Name: SPEAKER_ID_FUNCTION_NAME
+          Value:
+            Fn::If:
+            - HasSpeakerIdImage
+            - Ref: SpeakerIdFunction
+            - ''
+        - Name: WHISPER_MODEL
+          Value:
+            Ref: WhisperModel
+        - Name: PYANNOTE_MODEL
+          Value:
+            Ref: PyannoteModel
+        - Name: HF_TOKEN
+          Value:
+            Ref: HfToken
+        LogConfiguration:
+          LogDriver: awslogs
+          Options:
+            awslogs-group:
+              Ref: AsrWorkerLogGroup
+            awslogs-region:
+              Ref: AWS::Region
+            awslogs-stream-prefix: asr
+  AsrWorkerTaskDefinitionFargate:
+    Condition: HasAsrWorkerImage
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family:
+        Fn::Sub: ${AWS::StackName}-asr-worker-fargate
+      Cpu: '2048'
+      Memory: '8192'
+      NetworkMode: awsvpc
+      RequiresCompatibilities:
+      - FARGATE
+      RuntimePlatform:
+        CpuArchitecture: X86_64
+        OperatingSystemFamily: LINUX
+      ExecutionRoleArn:
+        Fn::GetAtt:
+        - AsrTaskExecutionRole
+        - Arn
+      TaskRoleArn:
+        Fn::GetAtt:
+        - AsrTaskRole
+        - Arn
+      ContainerDefinitions:
+      - Name: asr-worker
+        Image:
+          Ref: AsrWorkerImageUri
+        Essential: true
+        Environment:
+        - Name: AWS_REGION
+          Value:
+            Ref: AWS::Region
+        - Name: UPLOADS_BUCKET
+          Value:
+            Ref: UploadsBucket
+        - Name: ARTIFACTS_BUCKET
+          Value:
+            Ref: ArtifactsBucket
+        - Name: CALIBRATION_BUCKET
+          Value:
+            Ref: UploadsBucket
+        - Name: TRANSCRIPTS_TABLE
+          Value:
+            Ref: TranscriptsTable
+        - Name: TRANSCRIPT_ID_INDEX
+          Value: TranscriptIdIndex
+        - Name: DAILY_WORD_STATS_TABLE
+          Value:
+            Ref: DailyWordStatsTable
+        - Name: ASR_JOBS_QUEUE_URL
+          Value:
+            Ref: AsrJobsQueue
+        - Name: ASR_WARM_STATE_TABLE
+          Value:
+            Ref: AsrWarmStateTable
+        - Name: SPEAKER_ID_FUNCTION_NAME
+          Value:
+            Fn::If:
+            - HasSpeakerIdImage
+            - Ref: SpeakerIdFunction
+            - ''
+        - Name: WHISPER_MODEL
+          Value:
+            Ref: WhisperModel
+        - Name: PYANNOTE_MODEL
+          Value:
+            Ref: PyannoteModel
+        - Name: HF_TOKEN
+          Value:
+            Ref: HfToken
+        LogConfiguration:
+          LogDriver: awslogs
+          Options:
+            awslogs-group:
+              Ref: AsrWorkerLogGroup
+            awslogs-region:
+              Ref: AWS::Region
+            awslogs-stream-prefix: asr
+  AsrWorkerService:
+    Condition: HasAsrWorkerImage
+    Type: AWS::ECS::Service
+    Properties:
+      ServiceName:
+        Fn::Sub: ${AWS::StackName}-asr-service
+      Cluster:
+        Ref: AsrEcsCluster
+      TaskDefinition:
+        Ref: AsrWorkerTaskDefinitionFargate
+      DesiredCount: 0
+      LaunchType: FARGATE
+      PlatformVersion: LATEST
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: ENABLED
+          Subnets:
+          - Ref: AsrPublicSubnetA
+          - Ref: AsrPublicSubnetB
+          SecurityGroups:
+          - Ref: AsrTaskSecurityGroup
+  ApiFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Runtime: python3.12
+      Timeout: 60
+      MemorySize: 512
+      CodeUri: s3://transcribe-mvp-pack-747038497849-us-east-2/2aa045b2afcea5b2699f2964c3316521
+      Handler: app.handler
+      Environment:
+        Variables:
+          ASR_ENGINE:
+            Ref: AsrEngine
+          ASR_DISPATCH_MODE: queue_service
+          UPLOADS_BUCKET:
+            Ref: UploadsBucket
+          ARTIFACTS_BUCKET:
+            Ref: ArtifactsBucket
+          CALIBRATION_BUCKET:
+            Ref: UploadsBucket
+          TRANSCRIPTS_TABLE:
+            Ref: TranscriptsTable
+          TRANSCRIPT_ID_INDEX: TranscriptIdIndex
+          DAILY_WORD_STATS_TABLE:
+            Ref: DailyWordStatsTable
+          ASR_JOBS_QUEUE_URL:
+            Ref: AsrJobsQueue
+          ASR_WARM_STATE_TABLE:
+            Ref: AsrWarmStateTable
+          ASR_WORKER_SERVICE_NAME:
+            Fn::If:
+            - HasAsrWorkerImage
+            - Ref: AsrWorkerService
+            - ''
+          ASR_WARM_WINDOW_SECONDS: '3600'
+          SPEAKER_ID_FUNCTION_NAME:
+            Fn::If:
+            - HasSpeakerIdImage
+            - Ref: SpeakerIdFunction
+            - ''
+          ECS_CLUSTER_ARN:
+            Ref: AsrEcsCluster
+          ECS_TASK_DEF_ARN:
+            Fn::If:
+            - HasAsrWorkerImageAndGpu
+            - Ref: AsrWorkerTaskDefinition
+            - ''
+          ECS_FARGATE_TASK_DEF_ARN:
+            Fn::If:
+            - HasAsrWorkerImage
+            - Ref: AsrWorkerTaskDefinitionFargate
+            - ''
+          ECS_CONTAINER_NAME: asr-worker
+          ECS_SUBNET_IDS:
+            Fn::Join:
+            - ','
+            - - Ref: AsrPublicSubnetA
+              - Ref: AsrPublicSubnetB
+          ECS_SECURITY_GROUP_IDS:
+            Ref: AsrTaskSecurityGroup
+          ECS_TASK_ASSIGN_PUBLIC_IP: ENABLED
+          ECS_GPU_SPOT_CAPACITY_PROVIDER:
+            Fn::If:
+            - UseGpuPath
+            - Ref: AsrGpuSpotCapacityProvider
+            - ''
+          ECS_GPU_ONDEMAND_CAPACITY_PROVIDER:
+            Fn::If:
+            - UseGpuPath
+            - Ref: AsrGpuOnDemandCapacityProvider
+            - ''
+          ASR_GPU_SPOT_ASG_NAME:
+            Fn::If:
+            - UseGpuPath
+            - Ref: AsrGpuSpotAutoScalingGroup
+            - ''
+          ASR_GPU_ONDEMAND_ASG_NAME:
+            Fn::If:
+            - UseGpuPath
+            - Ref: AsrGpuOnDemandAutoScalingGroup
+            - ''
+          SQL_CLUSTER_ARN:
+            Fn::If:
+            - HasSql
+            - Fn::If:
+              - HasExternalSql
+              - Ref: SqlClusterArn
+              - Fn::GetAtt:
+                - AnalyticsDbCluster
+                - DBClusterArn
+            - ''
+          SQL_SECRET_ARN:
+            Fn::If:
+            - HasSql
+            - Fn::If:
+              - HasExternalSql
+              - Ref: SqlSecretArn
+              - Fn::GetAtt:
+                - AnalyticsDbCluster
+                - MasterUserSecret.SecretArn
+            - ''
+          SQL_DATABASE:
+            Fn::If:
+            - HasSql
+            - Ref: SqlDatabase
+            - ''
+      Policies:
+      - S3CrudPolicy:
+          BucketName:
+            Ref: UploadsBucket
+      - S3CrudPolicy:
+          BucketName:
+            Ref: ArtifactsBucket
+      - DynamoDBCrudPolicy:
+          TableName:
+            Ref: TranscriptsTable
+      - DynamoDBCrudPolicy:
+          TableName:
+            Ref: DailyWordStatsTable
+      - Statement:
+        - Effect: Allow
+          Action:
+          - ecs:RunTask
+          Resource:
+            Fn::If:
+            - HasAsrWorkerImageAndGpu
+            - - Ref: AsrWorkerTaskDefinition
+              - Ref: AsrWorkerTaskDefinitionFargate
+            - Fn::If:
+              - HasAsrWorkerImage
+              - - Ref: AsrWorkerTaskDefinitionFargate
+              - '*'
+        - Effect: Allow
+          Action:
+          - ecs:DescribeTasks
+          - ecs:StopTask
+          Resource: '*'
+        - Effect: Allow
+          Action:
+          - ecs:DescribeServices
+          - ecs:UpdateService
+          Resource: '*'
+        - Effect: Allow
+          Action:
+          - autoscaling:DescribeAutoScalingGroups
+          Resource: '*'
+        - Effect: Allow
+          Action:
+          - sqs:SendMessage
+          Resource:
+            Fn::GetAtt:
+            - AsrJobsQueue
+            - Arn
+        - Effect: Allow
+          Action:
+          - dynamodb:GetItem
+          - dynamodb:PutItem
+          - dynamodb:UpdateItem
+          Resource:
+            Fn::GetAtt:
+            - AsrWarmStateTable
+            - Arn
+        - Effect: Allow
+          Action:
+          - iam:PassRole
+          Resource:
+          - Fn::GetAtt:
+            - AsrTaskExecutionRole
+            - Arn
+          - Fn::GetAtt:
+            - AsrTaskRole
+            - Arn
+        - Effect: Allow
+          Action:
+          - lambda:InvokeFunction
+          Resource:
+            Fn::Sub: arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${AWS::StackName}-ApiFunction-*
+        - Fn::If:
+          - HasSql
+          - Effect: Allow
+            Action:
+            - rds-data:BatchExecuteStatement
+            - rds-data:BeginTransaction
+            - rds-data:CommitTransaction
+            - rds-data:ExecuteStatement
+            - rds-data:RollbackTransaction
+            Resource:
+              Fn::If:
+              - HasExternalSql
+              - Ref: SqlClusterArn
+              - Fn::GetAtt:
+                - AnalyticsDbCluster
+                - DBClusterArn
+          - Ref: AWS::NoValue
+        - Fn::If:
+          - HasSql
+          - Effect: Allow
+            Action:
+            - secretsmanager:GetSecretValue
+            Resource:
+              Fn::If:
+              - HasExternalSql
+              - Ref: SqlSecretArn
+              - Fn::GetAtt:
+                - AnalyticsDbCluster
+                - MasterUserSecret.SecretArn
+          - Ref: AWS::NoValue
+        - Fn::If:
+          - HasSpeakerIdImage
+          - Effect: Allow
+            Action:
+            - lambda:InvokeFunction
+            Resource:
+              Fn::GetAtt:
+              - SpeakerIdFunction
+              - Arn
+          - Ref: AWS::NoValue
+      Events:
+        CalibrationPresign:
+          Type: HttpApi
+          Properties:
+            ApiId:
+              Ref: HttpApi
+            Path: /v1/calibration/presign
+            Method: POST
+        CalibrationStatus:
+          Type: HttpApi
+          Properties:
+            ApiId:
+              Ref: HttpApi
+            Path: /v1/calibration/status
+            Method: GET
+        AsrWarmup:
+          Type: HttpApi
+          Properties:
+            ApiId:
+              Ref: HttpApi
+            Path: /v1/asr/warmup
+            Method: POST
+        AsrRuntimeStatus:
+          Type: HttpApi
+          Properties:
+            ApiId:
+              Ref: HttpApi
+            Path: /v1/asr/runtime-status
+            Method: GET
+        UploadUrl:
+          Type: HttpApi
+          Properties:
+            ApiId:
+              Ref: HttpApi
+            Path: /upload-url
+            Method: POST
+        CreateTranscription:
+          Type: HttpApi
+          Properties:
+            ApiId:
+              Ref: HttpApi
+            Path: /transcriptions
+            Method: POST
+        ListTranscriptions:
+          Type: HttpApi
+          Properties:
+            ApiId:
+              Ref: HttpApi
+            Path: /transcriptions
+            Method: GET
+        GetTranscriptionStatus:
+          Type: HttpApi
+          Properties:
+            ApiId:
+              Ref: HttpApi
+            Path: /transcriptions/{transcriptId}/status
+            Method: GET
+        GetTranscription:
+          Type: HttpApi
+          Properties:
+            ApiId:
+              Ref: HttpApi
+            Path: /transcriptions/{transcriptId}
+            Method: GET
+        GetTranscriptInteractions:
+          Type: HttpApi
+          Properties:
+            ApiId:
+              Ref: HttpApi
+            Path: /transcriptions/{transcriptId}/interactions
+            Method: GET
+        ProgressionDaily:
+          Type: HttpApi
+          Properties:
+            ApiId:
+              Ref: HttpApi
+            Path: /analytics/progression/daily
+            Method: GET
+        ProgressionWeekly:
+          Type: HttpApi
+          Properties:
+            ApiId:
+              Ref: HttpApi
+            Path: /analytics/progression/weekly
+            Method: GET
+        ProgressionMonthlyCalendar:
+          Type: HttpApi
+          Properties:
+            ApiId:
+              Ref: HttpApi
+            Path: /analytics/progression/monthly-calendar
+            Method: GET
+        ProgressionMonthly:
+          Type: HttpApi
+          Properties:
+            ApiId:
+              Ref: HttpApi
+            Path: /analytics/progression/monthly
+            Method: GET
+        InteractionsLatency:
+          Type: HttpApi
+          Properties:
+            ApiId:
+              Ref: HttpApi
+            Path: /analytics/interactions/latency
+            Method: GET
+  AsrWarmControllerLogGroup:
+    Condition: HasAsrWorkerImage
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName:
+        Fn::Sub: /aws/lambda/${AWS::StackName}-asr-warm-controller
+      RetentionInDays: 7
+  AsrWarmControllerFunction:
+    Condition: HasAsrWorkerImage
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName:
+        Fn::Sub: ${AWS::StackName}-asr-warm-controller
+      Runtime: python3.12
+      Timeout: 30
+      MemorySize: 256
+      CodeUri: s3://transcribe-mvp-pack-747038497849-us-east-2/2aa045b2afcea5b2699f2964c3316521
+      Handler: asr_warm_controller.handler
+      Environment:
+        Variables:
+          ASR_WARM_STATE_TABLE:
+            Ref: AsrWarmStateTable
+          ASR_JOBS_QUEUE_URL:
+            Ref: AsrJobsQueue
+          ECS_CLUSTER_ARN:
+            Ref: AsrEcsCluster
+          ASR_WORKER_SERVICE_NAME:
+            Ref: AsrWorkerService
+      Policies:
+      - AWSLambdaBasicExecutionRole
+      - Statement:
+        - Effect: Allow
+          Action:
+          - ecs:DescribeServices
+          - ecs:UpdateService
+          Resource: '*'
+        - Effect: Allow
+          Action:
+          - sqs:GetQueueAttributes
+          Resource:
+            Fn::GetAtt:
+            - AsrJobsQueue
+            - Arn
+        - Effect: Allow
+          Action:
+          - dynamodb:GetItem
+          - dynamodb:PutItem
+          - dynamodb:UpdateItem
+          Resource:
+            Fn::GetAtt:
+            - AsrWarmStateTable
+            - Arn
+      Events:
+        EveryMinute:
+          Type: Schedule
+          Properties:
+            Schedule: rate(1 minute)
+            Enabled: true
+  WarmScaleUpMetricFilter:
+    Condition: HasAsrWorkerImage
+    Type: AWS::Logs::MetricFilter
+    Properties:
+      LogGroupName:
+        Ref: AsrWarmControllerLogGroup
+      FilterPattern: '{ $.event = "WarmScaleUp" }'
+      MetricTransformations:
+      - MetricNamespace:
+          Fn::Sub: ${AWS::StackName}/ASR
+        MetricName: WarmScaleUp
+        MetricValue: '1'
+  WarmScaleDownMetricFilter:
+    Condition: HasAsrWorkerImage
+    Type: AWS::Logs::MetricFilter
+    Properties:
+      LogGroupName:
+        Ref: AsrWarmControllerLogGroup
+      FilterPattern: '{ $.event = "WarmScaleDown" }'
+      MetricTransformations:
+      - MetricNamespace:
+          Fn::Sub: ${AWS::StackName}/ASR
+        MetricName: WarmScaleDown
+        MetricValue: '1'
+  QueueBacklogMetricFilter:
+    Condition: HasAsrWorkerImage
+    Type: AWS::Logs::MetricFilter
+    Properties:
+      LogGroupName:
+        Ref: AsrWarmControllerLogGroup
+      FilterPattern: '{ $.event = "QueueBacklog" }'
+      MetricTransformations:
+      - MetricNamespace:
+          Fn::Sub: ${AWS::StackName}/ASR
+        MetricName: QueueBacklog
+        MetricValue: $.queueVisible
+  AsrWorkerEcrRepo:
+    Type: AWS::ECR::Repository
+    Properties:
+      ImageScanningConfiguration:
+        ScanOnPush: true
+      EncryptionConfiguration:
+        EncryptionType: AES256
+  AsrWorkerCodeBuildRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: codebuild.amazonaws.com
+          Action: sts:AssumeRole
+      Policies:
+      - PolicyName: AsrWorkerCodeBuildPolicy
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Effect: Allow
+            Action:
+            - logs:CreateLogGroup
+            - logs:CreateLogStream
+            - logs:PutLogEvents
+            Resource: '*'
+          - Effect: Allow
+            Action:
+            - s3:GetObject
+            Resource: '*'
+          - Effect: Allow
+            Action:
+            - ecr:GetAuthorizationToken
+            Resource: '*'
+          - Effect: Allow
+            Action:
+            - ecr:BatchCheckLayerAvailability
+            - ecr:CompleteLayerUpload
+            - ecr:InitiateLayerUpload
+            - ecr:PutImage
+            - ecr:UploadLayerPart
+            Resource:
+              Fn::GetAtt:
+              - AsrWorkerEcrRepo
+              - Arn
+  AsrWorkerCodeBuildProject:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Name:
+        Fn::Sub: ${AWS::StackName}-asr-build
+      ServiceRole:
+        Fn::GetAtt:
+        - AsrWorkerCodeBuildRole
+        - Arn
+      Artifacts:
+        Type: NO_ARTIFACTS
+      Cache:
+        Type: LOCAL
+        Modes:
+        - LOCAL_DOCKER_LAYER_CACHE
+      Environment:
+        Type: LINUX_CONTAINER
+        ComputeType: BUILD_GENERAL1_LARGE
+        Image: aws/codebuild/standard:7.0
+        PrivilegedMode: true
+        EnvironmentVariables:
+        - Name: ECR_REPO_URI
+          Value:
+            Fn::GetAtt:
+            - AsrWorkerEcrRepo
+            - RepositoryUri
+      Source:
+        Type: S3
+        Location: dummy/dummy.zip
+        BuildSpec: buildspec.yml
+      LogsConfig:
+        CloudWatchLogs:
+          Status: ENABLED
+  SpeakerIdEcrRepo:
+    Type: AWS::ECR::Repository
+    Properties:
+      ImageScanningConfiguration:
+        ScanOnPush: true
+      EncryptionConfiguration:
+        EncryptionType: AES256
+  SpeakerIdCodeBuildRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: codebuild.amazonaws.com
+          Action: sts:AssumeRole
+      Policies:
+      - PolicyName: SpeakerIdCodeBuildPolicy
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Effect: Allow
+            Action:
+            - logs:CreateLogGroup
+            - logs:CreateLogStream
+            - logs:PutLogEvents
+            Resource: '*'
+          - Effect: Allow
+            Action:
+            - s3:GetObject
+            Resource: '*'
+          - Effect: Allow
+            Action:
+            - ecr:GetAuthorizationToken
+            Resource: '*'
+          - Effect: Allow
+            Action:
+            - ecr:BatchCheckLayerAvailability
+            - ecr:CompleteLayerUpload
+            - ecr:InitiateLayerUpload
+            - ecr:PutImage
+            - ecr:UploadLayerPart
+            Resource:
+              Fn::GetAtt:
+              - SpeakerIdEcrRepo
+              - Arn
+  SpeakerIdCodeBuildProject:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Name:
+        Fn::Sub: ${AWS::StackName}-speakerid-build
+      ServiceRole:
+        Fn::GetAtt:
+        - SpeakerIdCodeBuildRole
+        - Arn
+      Artifacts:
+        Type: NO_ARTIFACTS
+      Cache:
+        Type: LOCAL
+        Modes:
+        - LOCAL_DOCKER_LAYER_CACHE
+      Environment:
+        Type: LINUX_CONTAINER
+        ComputeType: BUILD_GENERAL1_LARGE
+        Image: aws/codebuild/standard:7.0
+        PrivilegedMode: true
+        EnvironmentVariables:
+        - Name: ECR_REPO_URI
+          Value:
+            Fn::GetAtt:
+            - SpeakerIdEcrRepo
+            - RepositoryUri
+      Source:
+        Type: S3
+        Location: dummy/dummy.zip
+        BuildSpec: buildspec.yml
+      LogsConfig:
+        CloudWatchLogs:
+          Status: ENABLED
+  SpeakerIdFunction:
+    Condition: HasSpeakerIdImage
+    Type: AWS::Serverless::Function
+    Properties:
+      PackageType: Image
+      ImageUri:
+        Ref: SpeakerIdImageUri
+      Timeout: 900
+      MemorySize: 3008
+      EphemeralStorage:
+        Size: 2048
+      Environment:
+        Variables:
+          UPLOADS_BUCKET:
+            Ref: UploadsBucket
+          CALIBRATION_BUCKET:
+            Ref: UploadsBucket
+          TRANSCRIPTS_TABLE:
+            Ref: TranscriptsTable
+          TRANSCRIPT_ID_INDEX: TranscriptIdIndex
+          DAILY_WORD_STATS_TABLE:
+            Ref: DailyWordStatsTable
+          SPEAKER_ID_MIN_SIM: '0.35'
+          SPEAKER_ID_MIN_MARGIN: '0.02'
+          SPEAKER_ID_MIN_SEGMENT_S: '0.8'
+          SPEAKER_ID_MAX_AUDIO_S: '60'
+      Policies:
+      - S3ReadPolicy:
+          BucketName:
+            Ref: UploadsBucket
+      - DynamoDBCrudPolicy:
+          TableName:
+            Ref: TranscriptsTable
+      - DynamoDBCrudPolicy:
+          TableName:
+            Ref: DailyWordStatsTable
+      CodeUri: s3://transcribe-mvp-pack-747038497849-us-east-2/c709884d65648bb03d0dfabda9de272e
+Outputs:
+  ApiUrl:
+    Description: HTTP API endpoint URL
+    Value:
+      Fn::Sub: https://${HttpApi}.execute-api.${AWS::Region}.amazonaws.com
+  UploadsBucketName:
+    Value:
+      Ref: UploadsBucket
+  ArtifactsBucketName:
+    Value:
+      Ref: ArtifactsBucket
+  FrontendBucketName:
+    Value:
+      Ref: FrontendBucket
+  FrontendUrl:
+    Description: CloudFront frontend URL (HTTPS)
+    Value:
+      Fn::Join:
+      - ''
+      - - https://
+        - Fn::GetAtt:
+          - FrontendDistribution
+          - DomainName
+  CloudFrontDomainName:
+    Value:
+      Fn::GetAtt:
+      - FrontendDistribution
+      - DomainName
+  CloudFrontDistributionId:
+    Value:
+      Ref: FrontendDistribution
+  DynamoTableName:
+    Value:
+      Ref: TranscriptsTable
+  DailyWordStatsTableName:
+    Value:
+      Ref: DailyWordStatsTable
+  AsrWorkerEcrRepoUri:
+    Value:
+      Fn::GetAtt:
+      - AsrWorkerEcrRepo
+      - RepositoryUri
+  AsrWorkerCodeBuildProjectName:
+    Value:
+      Ref: AsrWorkerCodeBuildProject
+  AsrClusterName:
+    Value:
+      Ref: AsrEcsCluster
+  AsrTaskDefinitionArn:
+    Value:
+      Fn::If:
+      - HasAsrWorkerImageAndGpu
+      - Ref: AsrWorkerTaskDefinition
+      - ''
+  AsrFargateFallbackTaskDefinitionArn:
+    Value:
+      Fn::If:
+      - HasAsrWorkerImage
+      - Ref: AsrWorkerTaskDefinitionFargate
+      - ''
+  AsrWorkerServiceName:
+    Value:
+      Fn::If:
+      - HasAsrWorkerImage
+      - Ref: AsrWorkerService
+      - ''
+  AsrJobsQueueUrl:
+    Value:
+      Ref: AsrJobsQueue
+  AsrJobsQueueArn:
+    Value:
+      Fn::GetAtt:
+      - AsrJobsQueue
+      - Arn
+  AsrWarmStateTableName:
+    Value:
+      Ref: AsrWarmStateTable
+  AsrGpuSpotCapacityProviderName:
+    Value:
+      Fn::If:
+      - UseGpuPath
+      - Ref: AsrGpuSpotCapacityProvider
+      - ''
+  AsrGpuOnDemandCapacityProviderName:
+    Value:
+      Fn::If:
+      - UseGpuPath
+      - Ref: AsrGpuOnDemandCapacityProvider
+      - ''
+  AsrGpuSpotAsgName:
+    Value:
+      Fn::If:
+      - UseGpuPath
+      - Ref: AsrGpuSpotAutoScalingGroup
+      - ''
+  AsrGpuOnDemandAsgName:
+    Value:
+      Fn::If:
+      - UseGpuPath
+      - Ref: AsrGpuOnDemandAutoScalingGroup
+      - ''
+  SpeakerIdEcrRepoUri:
+    Value:
+      Fn::GetAtt:
+      - SpeakerIdEcrRepo
+      - RepositoryUri
+  SpeakerIdCodeBuildProjectName:
+    Value:
+      Ref: SpeakerIdCodeBuildProject
+  SqlEnabled:
+    Value:
+      Fn::If:
+      - HasSql
+      - 'true'
+      - 'false'
+  SqlClusterArnOut:
+    Value:
+      Fn::If:
+      - HasSql
+      - Fn::If:
+        - HasExternalSql
+        - Ref: SqlClusterArn
+        - Fn::GetAtt:
+          - AnalyticsDbCluster
+          - DBClusterArn
+      - ''
+  SqlSecretArnOut:
+    Value:
+      Fn::If:
+      - HasSql
+      - Fn::If:
+        - HasExternalSql
+        - Ref: SqlSecretArn
+        - Fn::GetAtt:
+          - AnalyticsDbCluster
+          - MasterUserSecret.SecretArn
+      - ''

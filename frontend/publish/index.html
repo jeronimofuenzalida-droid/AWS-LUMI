@@ -1,0 +1,161 @@
+﻿<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Transcribe MVP</title>
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <div class="container">
+    <div class="header-row">
+      <h1>Speaker Transcription MVP</h1>
+      <div class="runtime-panel" aria-label="Runtime capacity counters">
+        <div class="runtime-title"><b>Workers</b></div>
+        <div class="runtime-table">
+          <div class="runtime-table-head"></div>
+          <div class="runtime-table-head">Active</div>
+          <div class="runtime-table-head">Activating</div>
+          <div class="runtime-table-head">Busy</div>
+          <div class="runtime-table-label">CPU</div>
+          <div><span id="warmCpuCount">-</span></div>
+          <div><span id="warmingCpuCount">-</span></div>
+          <div><span id="usedCpuCount">-</span></div>
+          <div class="runtime-table-label">GPU</div>
+          <div><span id="warmGpuCount">-</span></div>
+          <div><span id="warmingGpuCount">-</span></div>
+          <div><span id="usedGpuCount">-</span></div>
+        </div>
+        <div class="small">GPU = instances | CPU = worker capacity</div>
+      </div>
+    </div>
+
+    <div class="row">
+      <h2 style="margin:0 0 6px 0;">Calibration Uploads</h2>
+      <div class="row grid3">
+        <div class="card">
+          <h3>Kid Calibration</h3>
+          <label for="kidAgeMonths">Kid age (months)</label>
+          <select id="kidAgeMonths" style="margin-bottom:8px;">
+            <option value="">Select months</option>
+          </select>
+          <div class="file-actions">
+            <input id="calFileKid" type="file" accept="audio/*" />
+            <button id="calRecordKid" type="button">Record</button>
+          </div>
+          <button id="calBtnKid">Calibrate</button>
+          <div class="small"><span id="calStatusKid">Login required</span></div>
+          <div class="small mono"><span id="calKeyKid"></span></div>
+        </div>
+        <div class="card">
+          <h3>Parent 1 Calibration</h3>
+          <div class="file-actions">
+            <input id="calFileParent1" type="file" accept="audio/*" />
+            <button id="calRecordParent1" type="button">Record</button>
+          </div>
+          <button id="calBtnParent1">Calibrate</button>
+          <div class="small"><span id="calStatusParent1">Login required</span></div>
+          <div class="small mono"><span id="calKeyParent1"></span></div>
+        </div>
+        <div class="card">
+          <h3>Parent 2 Calibration</h3>
+          <div class="file-actions">
+            <input id="calFileParent2" type="file" accept="audio/*" />
+            <button id="calRecordParent2" type="button">Record</button>
+          </div>
+          <button id="calBtnParent2">Calibrate</button>
+          <div class="small"><span id="calStatusParent2">Login required</span></div>
+          <div class="small mono"><span id="calKeyParent2"></span></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="row">
+      <label>User (required)</label>
+      <input id="userId" placeholder="e.g. alice" />
+    </div>
+
+    <div class="row grid2">
+      <button id="loginBtn">Login</button>
+      <div class="status" style="margin:0;">
+        <div><b>Login:</b> <span id="loginState">Not logged</span></div>
+      </div>
+    </div>
+
+    <div id="recordDateSection" class="row" style="display:none;grid-template-columns:260px 1fr;gap:10px;align-items:end;">
+      <div>
+        <label>Record Date (user time)</label>
+        <input id="recordDate" type="date" />
+      </div>
+      <div class="small">Timezone: <span id="recordDateTimezone"></span></div>
+    </div>
+
+    <div id="kidPercentileSection" class="row" style="display:none;">
+      <div class="status" style="margin:0;">
+        <div><b>Kid percentile (this calendar month):</b> <span id="kidPercentileValue">-</span></div>
+        <div class="small"><span id="kidPercentileDetail">-</span></div>
+      </div>
+    </div>
+
+    <div class="row">
+      <label>Audio File</label>
+      <div class="file-actions">
+        <input id="file" type="file" accept="audio/*,video/mp4" disabled />
+        <button id="recordBtnMain" type="button" disabled>Record</button>
+      </div>
+      <div class="small"><span id="selectedFileInfo">No audio selected</span></div>
+    </div>
+
+    <div class="row">
+      <button id="transcribeBtn" disabled>Upload + Transcribe</button>
+    </div>
+
+    <div class="status">
+      <div><b>Status:</b> <span id="status">IDLE</span></div>
+      <div><b>Transcript ID:</b> <span id="transcriptId">-</span></div>
+      <div><b>Message:</b> <span id="message">-</span></div>
+    </div>
+
+    <div id="progressSection" style="display:none;">
+      <h2>Kid Language Progression</h2>
+      <div class="row" style="grid-template-columns:260px 1fr;align-items:center;">
+        <select id="progressUnit">
+          <option value="day">Days (last 12)</option>
+          <option value="week">Calendar Weeks (last 12)</option>
+          <option value="month">Calendar Months (last 12)</option>
+        </select>
+        <div class="small">Metric: Unique words (Kid)</div>
+      </div>
+      <div id="progressMessage" class="small"></div>
+      <svg id="progressChart" class="progress-chart" viewBox="0 0 760 240" aria-label="Kid unique words progression"></svg>
+      <div class="pos-category-section">
+        <h3>Word Categories</h3>
+        <div id="posCategoriesMessage" class="small"></div>
+        <div id="posCategories" class="pos-category-grid"></div>
+      </div>
+    </div>
+
+    <div id="result" style="display:none;">
+      <h2>Summary</h2>
+      <p><b>Detected Speakers:</b> <span id="numSpeakers"></span></p>
+
+      <table>
+        <thead>
+          <tr>
+            <th>Speaker Label</th>
+            <th>Speaker Name</th>
+            <th>Unique Word Count</th>
+            <th>Top 20 Words (count)</th>
+          </tr>
+        </thead>
+        <tbody id="speakerRows"></tbody>
+      </table>
+
+      <h2>Full Transcript</h2>
+      <pre id="fullText"></pre>
+    </div>
+  </div>
+
+  <script type="module" src="./app.js"></script>
+</body>
+</html>

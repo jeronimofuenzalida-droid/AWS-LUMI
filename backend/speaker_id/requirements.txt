@@ -1,0 +1,14 @@
+--index-url https://pypi.org/simple
+
+# Torch CPU wheels (python 3.12)
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch==2.3.1
+torchaudio==2.3.1
+
+speechbrain==1.0.3
+
+# misc
+numpy==1.26.4
+requests==2.32.3
+huggingface_hub==0.20.3
+aws-xray-sdk

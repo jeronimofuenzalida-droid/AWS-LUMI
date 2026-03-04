@@ -1,0 +1,41 @@
+__pycache__/
+.sam/
+build/
+frontend/node_modules/
+frontend/dist/
+qa/node_modules/
+qa/playwright-report/
+qa/.tmp/
+qa/qa-src.zip
+.DS_Store
+infra/template.packaged.yaml
+infra/template.build.yaml
+.env
+.env.*
+
+# Local speaker-id harness outputs
+artifacts/
+artifacts/local/
+
+# Local analysis and migration dumps
+raw_check_*.json
+latest_raw_*.json
+speakerid_*_logs.json
+qa_runs/
+migration/s3_stage/
+
+# Generated backend packaging debris should never live in source
+backend/src/*.dist-info/
+backend/src/aws_xray_sdk/
+backend/src/botocore/
+backend/src/dateutil/
+backend/src/jmespath/
+backend/src/urllib3/
+backend/src/wrapt/
+backend/src/bin/
+backend/src/six.py
+backend/src/__pycache__/
+
+# Playwright outputs
+qa/test-results/
+qa_runs/_wip/

@@ -1,0 +1,5 @@
+boto3>=1.28.0
+pydub>=0.25.1
+numpy>=1.24.0
+soundfile>=0.12.0
+respeecher_tts @ git+https://github.com/respeecher/respeecher_tts.git
